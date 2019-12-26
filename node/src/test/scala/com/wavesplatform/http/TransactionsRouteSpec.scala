@@ -15,15 +15,14 @@ import com.wavesplatform.lang.script.v1.ExprScript
 import com.wavesplatform.lang.v1.FunctionHeader
 import com.wavesplatform.lang.v1.compiler.Terms.{CONST_BOOLEAN, CONST_LONG, FUNCTION_CALL, TRUE}
 import com.wavesplatform.network.UtxPoolSynchronizer
-import com.wavesplatform.settings.{BlockchainSettings, GenesisSettings, RewardsSettings, TestFunctionalitySettings, WalletSettings}
+import com.wavesplatform.settings.{BlockchainSettings, GenesisSettings, RewardsSettings, TestFunctionalitySettings}
 import com.wavesplatform.state.{AssetDescription, Blockchain, Height}
 import com.wavesplatform.transaction.Asset.IssuedAsset
 import com.wavesplatform.transaction.smart.InvokeScriptTransaction
 import com.wavesplatform.transaction.smart.InvokeScriptTransaction.Payment
 import com.wavesplatform.transaction.transfer.{MassTransferTransaction, TransferTransaction}
 import com.wavesplatform.utx.UtxPool
-import com.wavesplatform.wallet.Wallet
-import com.wavesplatform.{BlockGen, NoShrink, TestTime, TransactionGen}
+import com.wavesplatform.{BlockGen, NoShrink, TestTime, TestWallet, TransactionGen}
 import monix.execution.Scheduler
 import org.scalacheck.Gen
 import org.scalacheck.Gen._
@@ -43,15 +42,15 @@ class TransactionsRouteSpec
     with BlockGen
     with PropertyChecks
     with OptionValues
+    with TestWallet
     with NoShrink {
 
   implicit def scheduler: Scheduler = Scheduler.global
 
-  private val wallet              = Wallet(WalletSettings(None, Some("qwerty"), None))
   private val blockchain          = mock[Blockchain]
   private val utx                 = mock[UtxPool]
   private val utxPoolSynchronizer = mock[UtxPoolSynchronizer]
-  private val route               = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+  private val route               = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
   private val invalidBase58Gen = alphaNumStr.map(_ + "0")
 
@@ -81,7 +80,7 @@ class TransactionsRouteSpec
           (blockchain.activatedFeatures _).expects().returning(featuresSettings.preActivatedFeatures)
           (blockchain.settings _).expects().returning(BlockchainSettings('T', featuresSettings, GenesisSettings.TESTNET, RewardsSettings.TESTNET))
 
-          val route = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           Post(routePath("/calculateFee"), transferTx) ~> route ~> check {
             status shouldEqual StatusCodes.OK
@@ -123,7 +122,7 @@ class TransactionsRouteSpec
           (blockchain.activatedFeatures _).expects().returning(featuresSettings.preActivatedFeatures)
           (blockchain.settings _).expects().returning(BlockchainSettings('T', featuresSettings, GenesisSettings.TESTNET, RewardsSettings.TESTNET))
 
-          val route = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           Post(routePath("/calculateFee"), transferTx) ~> route ~> check {
             status shouldEqual StatusCodes.OK
@@ -160,7 +159,7 @@ class TransactionsRouteSpec
           (blockchain.activatedFeatures _).expects().returning(featuresSettings.preActivatedFeatures)
           (blockchain.settings _).expects().returning(BlockchainSettings('T', featuresSettings, GenesisSettings.TESTNET, RewardsSettings.TESTNET))
 
-          val route = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           Post(routePath("/calculateFee"), transferTx) ~> route ~> check {
             status shouldEqual StatusCodes.OK
@@ -200,7 +199,7 @@ class TransactionsRouteSpec
             )
             .anyNumberOfTimes()
 
-          val route = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           Post(routePath("/calculateFee"), transferTx) ~> route ~> check {
             status shouldEqual StatusCodes.OK
@@ -241,7 +240,7 @@ class TransactionsRouteSpec
             )
             .anyNumberOfTimes()
 
-          val route = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           Post(routePath("/calculateFee"), transferTx) ~> route ~> check {
             status shouldEqual StatusCodes.OK
@@ -287,7 +286,7 @@ class TransactionsRouteSpec
       def routeGen: Gen[Route] =
         Gen.const({
           val b = mock[Blockchain]
-          TransactionsApiRoute(restAPISettings, wallet, b, utx, utxPoolSynchronizer, new TestTime).route
+          TransactionsApiRoute(restAPISettings, testWallet, b, utx, utxPoolSynchronizer, new TestTime).route
         })
 
       "address and limit" in {
@@ -332,6 +331,34 @@ class TransactionsRouteSpec
           Get(routePath(s"/info/${tx.id().toString}")) ~> route ~> check {
             status shouldEqual StatusCodes.OK
             responseAs[JsValue] shouldEqual tx.json() + ("height" -> JsNumber(height))
+          }
+      }
+    }
+  }
+
+  routePath("/status/{signature}") - {
+    "handles invalid signature" in {
+      forAll(invalidBase58Gen) { invalidBase58 =>
+        Get(routePath(s"/status?id=$invalidBase58")) ~> route should produce(InvalidSignature)
+      }
+    }
+
+    "working properly otherwise" in {
+      val txAvailability = for {
+        tx     <- randomTransactionGen
+        height <- Gen.chooseNum(1, 1000)
+      } yield (tx, height)
+
+      forAll(txAvailability) {
+        case (tx, height) =>
+          (blockchain.transactionInfo _).expects(tx.id()).returning(Some((height, tx))).anyNumberOfTimes()
+          (blockchain.height _).expects().returning(1000).anyNumberOfTimes()
+
+          Get(routePath(s"/status?id=${tx.id().toString}&id=${tx.id().toString}")) ~> route ~> check {
+            status shouldEqual StatusCodes.OK
+            val obj =
+              Json.obj("id" -> tx.id().toString, "status" -> "confirmed", "height" -> JsNumber(height), "confirmations" -> JsNumber(1000 - height))
+            responseAs[JsValue] shouldEqual Json.arr(obj, obj)
           }
       }
     }
@@ -400,8 +427,8 @@ class TransactionsRouteSpec
 
   routePath("/sign") - {
     "function call without args" in {
-      val acc1 = wallet.generateNewAccount().get
-      val acc2 = wallet.generateNewAccount().get
+      val acc1 = testWallet.generateNewAccount().get
+      val acc2 = testWallet.generateNewAccount().get
 
       val funcName          = "func"
       val funcWithoutArgs   = Json.obj("function" -> funcName)
@@ -512,7 +539,7 @@ class TransactionsRouteSpec
     "returns merkle proofs" in {
       forAll(validBlocksGen) { blocks =>
         val blockchain = prepareBlockchain(blocks)
-        val route      = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+        val route      = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
         val txIdsToBlock = blocks.flatMap(b => b.transactionData.map(tx => (tx.id().toString, b))).toMap
 
@@ -534,7 +561,7 @@ class TransactionsRouteSpec
       forAll(gen) {
         case (validBlocks, invalidBlocks, unknownTransactions) =>
           val blockchain = prepareBlockchain(validBlocks ++ invalidBlocks)
-          val route      = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+          val route      = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
           val txIdsToBlock = validBlocks.flatMap(b => b.transactionData.map(tx => (tx.id().toString, b))).toMap
 
@@ -562,7 +589,7 @@ class TransactionsRouteSpec
     "returns error in case of all transactions are filtered" in {
       forAll(invalidBlocksGen) { blocks =>
         val blockchain = prepareBlockchain(blocks)
-        val route      = TransactionsApiRoute(restAPISettings, wallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
+        val route      = TransactionsApiRoute(restAPISettings, testWallet, blockchain, utx, utxPoolSynchronizer, new TestTime).route
 
         val txIdsToBlock = blocks.flatMap(b => b.transactionData.map(tx => (tx.id().toString, b))).toMap
 

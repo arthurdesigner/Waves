@@ -13,6 +13,8 @@ import com.wavesplatform.transaction.Asset.IssuedAsset
 import com.wavesplatform.transaction.{Asset, Transaction}
 import play.api.libs.json._
 
+import scala.collection.mutable.LinkedHashMap
+
 case class LeaseBalance(in: Long, out: Long)
 
 object LeaseBalance {
@@ -130,7 +132,7 @@ object Sponsorship {
 }
 
 case class Diff(
-    transactions: Map[ByteStr, (Transaction, Set[Address])],
+    transactions: collection.Map[ByteStr, (Transaction, Set[Address])],
     portfolios: Map[Address, Portfolio],
     issuedAssets: Map[IssuedAsset, (AssetStaticInfo, AssetInfo, AssetVolumeInfo)],
     updatedAssets: Map[IssuedAsset, Ior[AssetInfo, AssetVolumeInfo]],
@@ -161,7 +163,7 @@ object Diff {
       scriptResults: Map[ByteStr, InvokeScriptResult] = Map.empty
   ): Diff =
     Diff(
-      transactions = Map(),
+      transactions = LinkedHashMap(),
       portfolios = portfolios,
       issuedAssets = issuedAssets,
       updatedAssets = updatedAssets,
@@ -194,7 +196,8 @@ object Diff {
       scriptResults: Map[ByteStr, InvokeScriptResult] = Map.empty
   ): Diff =
     Diff(
-      transactions = Map((tx.id(), (tx, (portfolios.keys ++ accountData.keys).toSet))),
+      // should be changed to VectorMap after 2.13 https://github.com/scala/scala/pull/6854
+      transactions = LinkedHashMap((tx.id(), (tx, (portfolios.keys ++ accountData.keys).toSet))),
       portfolios = portfolios,
       issuedAssets = issuedAssets,
       updatedAssets = updatedAssets,
@@ -211,7 +214,7 @@ object Diff {
     )
 
   val empty =
-    new Diff(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, 0, 0, Map.empty)
+    new Diff(LinkedHashMap(), Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, 0, 0, Map.empty)
 
   implicit val diffMonoid: Monoid[Diff] = new Monoid[Diff] {
     override def empty: Diff = Diff.empty

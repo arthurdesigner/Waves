@@ -7,7 +7,6 @@ import com.google.common.base.Throwables
 import com.wavesplatform.account.{Address, AddressScheme, PublicKey}
 import com.wavesplatform.common.state.ByteStr
 import com.wavesplatform.common.utils.EitherExt2
-import com.wavesplatform.features.BlockchainFeatures
 import com.wavesplatform.features.EstimatorProvider._
 import com.wavesplatform.features.FeatureProvider.FeatureProviderExt
 import com.wavesplatform.features.InvokeScriptSelfPaymentPolicyProvider._
@@ -409,7 +408,7 @@ object InvokeScriptTransactionDiff {
           val asset = IssuedAsset(issue.id)
 
           DiffsCommon
-            .countScriptComplexity(None /*issue.compiledScript*/, blockchain)
+            .countVerifierComplexity(None /*issue.compiledScript*/, blockchain)
             .map(
               script =>
                 Diff(

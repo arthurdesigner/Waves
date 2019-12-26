@@ -20,7 +20,7 @@ object AssetTransactionsDiff {
     val asset = IssuedAsset(tx.id())
 
     DiffsCommon
-      .countScriptComplexity(tx.script, blockchain)
+      .countVerifierComplexity(tx.script, blockchain)
       .map(
         script =>
           Diff(
@@ -37,7 +37,7 @@ object AssetTransactionsDiff {
     DiffsCommon.validateAsset(blockchain, tx.asset, tx.sender, issuerOnly = true).flatMap { _ =>
       if (blockchain.hasAssetScript(tx.asset)) {
         DiffsCommon
-          .countScriptComplexity(tx.script, blockchain)
+          .countVerifierComplexity(tx.script, blockchain)
           .map(
             script =>
               Diff(
